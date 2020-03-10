@@ -7,7 +7,7 @@
 
 struct THPGenerator {
   PyObject_HEAD
-  at::Generator *cdata;
+  at::GeneratorHolder cdata;
   bool owner;  // if true, frees cdata in destructor
 };
 
