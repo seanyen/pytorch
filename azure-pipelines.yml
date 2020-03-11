@@ -1,0 +1,21 @@
+jobs:
+- job: Build
+  timeoutInMinutes: 240
+  pool:
+    vmImage: 'windows-2019'
+  steps:
+  - script: |
+      git submodule update --init
+  - task: UsePythonVersion@0
+    inputs:
+      versionSpec: '2.7' 
+      addToPath: true 
+      architecture: 'x64'
+  - script: |
+      call "C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
+      pip install typing wheel
+      set USE_CUDA=0
+      set MSSdk=1
+      set FORCE_PY27_BUILD=1
+      python setup.py install
+      python setup.py bdist_wheel
