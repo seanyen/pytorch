@@ -330,6 +330,13 @@ If the future completes with an error, an exception is thrown.
     RpcAgent::setCurrentRpcAgent(nullptr);
   });
 
+  module.def(
+      "_delete_all_user_rrefs",
+      [](std::chrono::milliseconds timeoutMillis) {
+        RRefContext::getInstance().delAllUsers(timeoutMillis);
+      },
+      py::arg("timeout") = std::chrono::milliseconds(10000));
+
   module.def("_destroy_rref_context", [](bool ignoreRRefLeak) {
     // NB: do not release GIL in the function. The destroyInstance() method
     // returns a list of deleted OwnerRRefs that hold py::object instances.
