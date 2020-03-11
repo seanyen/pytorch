@@ -14,6 +14,9 @@ jobs:
       addToPath: true 
       architecture: 'x64'
   - script: |
+      pushd c:\
+      git clone https://github.com/pytorch/pytorch -b v1.4.0
+      pushd c:\pytorch
       call "C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
       pip install typing wheel pyyaml
       set USE_CUDA=0
