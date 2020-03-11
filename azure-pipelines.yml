@@ -4,6 +4,10 @@ jobs:
   pool:
     vmImage: 'windows-2019'
   steps:
+  - script: |
+      rd /s /q "C:\Program Files (x86)\Android"
+      FOR /f "tokens=*" %%i IN ('docker ps -aq') DO docker rm %%i
+      FOR /f "tokens=*" %%i IN ('docker images --format "{{.ID}}"') DO docker rmi %%i
   - task: UsePythonVersion@0
     inputs:
       versionSpec: '2.7' 
