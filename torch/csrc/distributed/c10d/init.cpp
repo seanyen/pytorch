@@ -273,18 +273,6 @@ This tensor can be further decomposed into a list of per-parameter tensors withi
 to apply layer-wise operations.
 )")
       .def(
-          py::init<
-              size_t,
-              const Tensor&,
-              const std::vector<size_t>&,
-              const std::vector<size_t>&,
-              const std::vector<c10::IntArrayRef>&>(),
-          py::arg("index"),
-          py::arg("tensor"),
-          py::arg("offsets"),
-          py::arg("lengths"),
-          py::arg("sizes_list"))
-      .def(
           "get_index",
           &::c10d::GradBucket::getIndex,
           py::call_guard<py::gil_scoped_release>(),
@@ -377,8 +365,10 @@ An enum-like class for built-in communication hooks: ``ALLREDUCE`` and ``FP16_CO
           &::c10d::Reducer::rebuild_buckets,
           py::call_guard<py::gil_scoped_release>())
       .def(
-          "get_bucket_tensors",
-          &::c10d::Reducer::get_bucket_tensors,
+          "_get_zeros_like_grad_buckets",
+          [](::c10d::Reducer& reducer) {
+            return reducer.get_grad_buckets(/* return_zero_tensors */ true);
+          },
           py::call_guard<py::gil_scoped_release>())
       .def(
           "_push_all_rebuilt_params",
@@ -409,6 +399,15 @@ An enum-like class for built-in communication hooks: ``ALLREDUCE`` and ``FP16_CO
           &::c10d::Reducer::delay_all_reduce,
           py::call_guard<py::gil_scoped_release>())
       .def(
+          "_run_comm_hook",
+          [](::c10d::Reducer& reducer, ::c10d::GradBucket& bucket)
+              -> std::shared_ptr<jit::PythonFutureWrapper> {
+            c10::intrusive_ptr<c10::ivalue::Future> fut =
+                reducer.run_comm_hook(bucket);
+            return std::make_shared<jit::PythonFutureWrapper>(fut);
+          },
+          py::call_guard<py::gil_scoped_release>())
+      .def(
           "set_logger",
           [](::c10d::Reducer& reducer,
              const std::shared_ptr<::c10d::Logger> logger) {
@@ -436,7 +435,7 @@ An enum-like class for built-in communication hooks: ``ALLREDUCE`` and ``FP16_CO
       .def(
           "set_error_and_log",
           [](::c10d::Logger& logger, const std::string& error) {
-              logger.set_error_and_log(error);
+            logger.set_error_and_log(error);
           },
           py::call_guard<py::gil_scoped_release>())
       .def(
@@ -807,7 +806,7 @@ A store implementation that uses a file to store the underlying key-value pairs.
 
 Arguments:
     file_name (str): path of the file in which to store the key-value pairs
-    world_size (int): The total number of processes using the store
+    world_size (int, optional): The total number of processes using the store. Default is -1 (a negative value indicates a non-fixed number of store users).
 
 Example::
     >>> import torch.distributed as dist
@@ -818,7 +817,14 @@ Example::
     >>> store2.get("first_key")
 
       )")
-      .def(py::init<const std::string&, int>());
+      .def(
+          py::init<const std::string&, int>(),
+          py::arg("file_name"),
+          py::arg("world_size") = -1)
+      .def_property_readonly(
+          "path",
+          &::c10d::FileStore::getPath,
+          R"(Gets the path of the file used by FileStore to store key-value pairs.)");
 
 #ifndef _WIN32
   intrusive_ptr_class_<::c10d::HashStore>(
@@ -854,7 +860,7 @@ the server to establish a connection.
 Arguments:
     host_name (str): The hostname or IP Address the server store should run on.
     port (int): The port on which the server store should listen for incoming requests.
-    world_size (int, optional): The total number of store users (number of clients + 1 for the server). Default is -1 (a negative value indicates an non-fixed number of store users).
+    world_size (int, optional): The total number of store users (number of clients + 1 for the server). Default is -1 (a negative value indicates a non-fixed number of store users).
     is_master (bool, optional): True when initializing the server store and False for client stores. Default is False.
     timeout (timedelta, optional): Timeout used by the store during initialization and for methods such as :meth:`~torch.distributed.store.get` and :meth:`~torch.distributed.store.wait`. Default is timedelta(seconds=300)
     wait_for_worker (bool, optional): Whether to wait for all the workers to connect with the server store. This is only applicable when world_size is a fixed value. Default is True.
@@ -1332,10 +1338,10 @@ options :class:`~torch.distributed.ProcessGroupNCCL.Options`).
           py::call_guard<py::gil_scoped_release>())
       .def_property_readonly("options", &::c10d::ProcessGroupGloo::getOptions);
 
-    // ProcessGroupWrapper is a wrapper pg that includes a helper gloo process
-    // group. It can be used to validate collective calls across processes by
-    // checking the op type and input tensor shapes.
-    auto processGroupWrapper =
+  // ProcessGroupWrapper is a wrapper pg that includes a helper gloo process
+  // group. It can be used to validate collective calls across processes by
+  // checking the op type and input tensor shapes.
+  auto processGroupWrapper =
       intrusive_ptr_no_gil_destructor_class_<::c10d::ProcessGroupWrapper>(
           module, "_ProcessGroupWrapper", processGroup)
           .def(
@@ -1482,14 +1488,13 @@ Example::
             Example::
                 Below is an example of a simple allreduce DDP communication hook that uses
                 ``get_future` API to retrieve a Future associated with the completion of
-                ``allreduce`` work.
+                ``allreduce``.
 
-                >>> def allreduce(state: object, bucket: dist.GradBucket): -> torch._C.Future
-                >>>     tensors = [t / process_group.world_size for t in bucket.get_tensors()]
-                >>>     work = process_group.allreduce(tensors)
-                >>>     return work.get_future()
-
-                >>> ddp_model._egister_comm_hook(state = None, hook = allreduce)
+                >>> def allreduce(process_group: dist.ProcessGroup, bucket: dist.GradBucket): -> torch.futures.Future
+                >>>     group_to_use = process_group if process_group is not None else torch.distributed.group.WORLD
+                >>>     tensor = bucket.get_tensor().div_(group_to_use.size())
+                >>>     return torch.distributed.all_reduce(tensor, group=group_to_use, async_op=True).get_future()
+                >>> ddp_model.register_comm_hook(state=None, hook=allreduce)
 
             .. warning ::
                 ``get_future`` API supports NCCL, and partially GLOO and MPI backends
@@ -1618,7 +1623,7 @@ Example::
 
 #undef PROCESS_GROUP_DEPRECATION_WARNING
 
-}
+} // namespace
 
 // c10d methods on torch._C
 static PyMethodDef methods[] = { // NOLINT
